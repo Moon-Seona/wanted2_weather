@@ -414,7 +414,7 @@ class L1Trainer():
             print('- Training on batches...')
             # Perform one full pass over the training set.
             train_labels, train_predict, train_loss = self.train(self.train_dataloader, optimizer, scheduler, device)
-            train_acc = roc_auc_score(train_labels, train_predict, multi_class='ovr' average='macro')
+            train_acc = roc_auc_score(train_labels, train_predict, multi_class='ovr', average='macro')
 
             # Get prediction form model on validation data.
             print('- Validation on batches...')
