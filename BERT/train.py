@@ -18,6 +18,8 @@ from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+#from lexrankr import LexRank
+from summa import summarizer
 
 import os
 
@@ -112,22 +114,23 @@ class ProblemDataset(Dataset):
         # through each label.
         data = pd.read_csv(path).fillna('error')
 
-        #end=int(data.__len__()*0.8)
-        self.texts = data['요약문_한글키워드'] + data['요약문_기대효과'] #data['요약문_연구내용']
+        #self.texts = data['요약문_한글키워드'] + data['요약문_기대효과']
+
+        # over 1 hours....
+        #lexrank = LexRank(tokenizer=use_tokenizer)
+        text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
+        for i in tqdm(range(len(text))):
+            #lexrank.summarize(i)
+            self.texts.append(summarizer.summarize(text[i], ratio=0.3))
 
         if val == 'test' :
-            #for i in tqdm(range(len(data))):
-            #    self.texts.append(data.iloc[i]['과제명'] + data.iloc[i]['요약문_연구내용'])
             self.labels = np.zeros(len(data))
+
         else :
-            # if val == 'valid':
-            #     data=data[end:]
-            # elif val == 'train' :
-            #     data=data[:end]
             data['label']=data['label'].astype(int)
             self.labels = data['label']
-            #print(len(self.texts), self.texts[0])
 
+            # if use text summarize, make texts list likewise below code..
             # for i in tqdm(range(len(data))): # 약 1분 소요
             #     self.texts.append(data.iloc[i]['과제명']+data.iloc[i]['요약문_연구내용'])
             #     self.labels.append(data.iloc[i]['label'])
@@ -166,16 +169,15 @@ class L1Trainer():
           bos_token='</s>', eos_token='</s>', unk_token='<unk>',
           pad_token='<pad>', mask_token='<mask>')
 
-        path = '../../data/'
+        path = '../../data/' # YS
+        #path = '/data/weather2/open/' # SA
         data = path + 'train.csv'
         test_data  = path + 'test.csv'
-        dataset = ProblemDataset(data, True, val='train')
+        dataset = ProblemDataset(data, tokenizer, val='train')
         train_len = int(len(dataset) * 0.8)
         val_len  = len(dataset) - train_len
         train_dataset, val_dataset = torch.utils.data.random_split(dataset, (train_len, val_len))
-        #train_dataset = ProblemDataset(data, True, val='train')
-        #val_dataset = ProblemDataset(data, True, val='valid')
-        test_dataset = ProblemDataset(test_data, True, val='test')
+        test_dataset = ProblemDataset(test_data, tokenizer, val='test')
 
         print('- finish load dataset!')
 
@@ -465,11 +467,11 @@ def main(epoch, batch_size, max_length, lr, ver):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=0)
+    parser.add_argument('--epoch', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=200)
     parser.add_argument('--lr', type=float, default=2e-5) # default is 5e-5,
-    parser.add_argument('--version', type=int, default=3)
+    parser.add_argument('--version', type=int, default=4)
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
