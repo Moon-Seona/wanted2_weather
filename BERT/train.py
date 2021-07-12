@@ -121,7 +121,7 @@ class ProblemDataset(Dataset):
         text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
         for i in tqdm(range(len(text))):
             #lexrank.summarize(i)
-            self.texts.append(summarizer.summarize(i, ratio=0.3))
+            self.texts.append(summarizer.summarize(text[i], ratio=0.3))
 
         if val == 'test' :
             self.labels = np.zeros(len(data))
@@ -169,7 +169,8 @@ class L1Trainer():
           bos_token='</s>', eos_token='</s>', unk_token='<unk>',
           pad_token='<pad>', mask_token='<mask>')
 
-        path = '../../data/'
+        path = '../../data/' # YS
+        #path = '/data/weather2/open/' # SA
         data = path + 'train.csv'
         test_data  = path + 'test.csv'
         dataset = ProblemDataset(data, tokenizer, val='train')
@@ -466,11 +467,11 @@ def main(epoch, batch_size, max_length, lr, ver):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=0)
+    parser.add_argument('--epoch', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=200)
     parser.add_argument('--lr', type=float, default=2e-5) # default is 5e-5,
-    parser.add_argument('--version', type=int, default=3)
+    parser.add_argument('--version', type=int, default=4)
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
