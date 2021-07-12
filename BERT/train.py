@@ -1,5 +1,5 @@
 # from ml_things import plot_dict, plot_confusion_matrix, fix_text
-from sklearn.metrics import classification_report, accuracy_score, roc_auc_score
+from sklearn.metrics import classification_report, accuracy_score, roc_auc_score, precision_recall_fscore_support
 from sklearn.metrics import f1_score # macro f1 score를 쓰기 위해
 from sklearn.model_selection import train_test_split
 
@@ -114,14 +114,11 @@ class ProblemDataset(Dataset):
         # through each label.
         data = pd.read_csv(path).fillna('error')
 
-        #self.texts = data['요약문_한글키워드'] + data['요약문_기대효과']
+        self.texts = data['요약문_한글키워드'] + data['요약문_기대효과']
 
-        # over 1 hours....
-        #lexrank = LexRank(tokenizer=use_tokenizer)
-        text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
-        for i in tqdm(range(len(text))):
-            #lexrank.summarize(i)
-            self.texts.append(summarizer.summarize(text[i], ratio=0.3))
+        # text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
+        # for i in tqdm(range(len(text))):
+        #     self.texts.append(summarizer.summarize(text[i], ratio=0.3))
 
         if val == 'test' :
             self.labels = np.zeros(len(data))
@@ -169,8 +166,8 @@ class L1Trainer():
           bos_token='</s>', eos_token='</s>', unk_token='<unk>',
           pad_token='<pad>', mask_token='<mask>')
 
-        path = '../../data/' # YS
-        #path = '/data/weather2/open/' # SA
+        #path = '../../data/' # YS
+        path = '/data/weather2/open/' # SA
         data = path + 'train.csv'
         test_data  = path + 'test.csv'
         dataset = ProblemDataset(data, tokenizer, val='train')
@@ -416,21 +413,19 @@ class L1Trainer():
             print('- Training on batches...')
             # Perform one full pass over the training set.
             train_labels, train_predict, train_loss = self.train(self.train_dataloader, optimizer, scheduler, device)
-            train_acc = roc_auc_score(train_labels, train_predict, multi_class='ovr', average='macro')
+            #train_acc = roc_auc_score(train_labels, train_predict, multi_class='ovr', average='macro')
+            _, _, train_acc, _ = precision_recall_fscore_support(train_labels, train_predict, average='macro')
 
             # Get prediction form model on validation data.
             print('- Validation on batches...')
             valid_labels, valid_predict, val_loss = self.validation(self.valid_dataloader, device)
-            val_acc = roc_auc_score(valid_labels, valid_predict, multi_class='ovr', average='macro')
+            #val_acc = roc_auc_score(valid_labels, valid_predict, multi_class='ovr', average='macro')
+            _,_,val_acc,_ = precision_recall_fscore_support(valid_labels, valid_predict, average='macro')
 
             # Print loss and accuracy values to see how training evolves.
             print("- train_loss: %.5f - val_loss: %.5f - train_acc: %.5f - valid_acc: %.5f"%(train_loss, val_loss, train_acc, val_acc))
             print()
-        #
-        # print(valid_labels)
-        # print(valid_predict)
-        # print(train_labels)
-        # print(train_predict)
+
             if val_acc >= best_val_acc :
                 best_val_acc = val_acc
                 best_epoch = epoch
@@ -441,8 +436,7 @@ class L1Trainer():
         predict_label = self.test(self.test_dataloader, device)
         self.save_csv(predict_label, ver)
 
-        ### maek def for save predict label from BERT to csv file
-
+    ### maek def for save predict label from BERT to csv file
     def save_model(self, ver):
         torch.save(self.model.state_dict(), f"./save/model_{ver}.pt")
         print("- model saved!")

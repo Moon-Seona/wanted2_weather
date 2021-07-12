@@ -1,5 +1,5 @@
 # from ml_things import plot_dict, plot_confusion_matrix, fix_text
-from sklearn.metrics import classification_report, accuracy_score, roc_auc_score
+from sklearn.metrics import classification_report, accuracy_score, roc_auc_score, precision_recall_fscore_support
 from sklearn.metrics import f1_score # macro f1 score를 쓰기 위해
 from sklearn.model_selection import train_test_split
 
@@ -407,23 +407,23 @@ class L1Trainer():
             # Perform one full pass over the training set.
             train_labels, train_predict, train_loss = self.train(self.train_dataloader, optimizer, scheduler, device)
             #train_acc = roc_auc_score(train_labels, train_predict, multi_class='ovr', average='macro')
-            try:
-                train_acc = classification_report(train_labels, train_predict)['macro avg']['f1-score']
-                print('f1-macro!')
-            except:
-                train_acc = accuracy_score(train_labels, train_predict)
-
+            # try:
+            #     train_acc = classification_report(train_labels, train_predict)['macro avg']['f1-score']
+            #     print('f1-macro!')
+            # except:
+            #     train_acc = accuracy_score(train_labels, train_predict)
+            _, _, train_acc, _ = precision_recall_fscore_support(train_labels, train_predict, average='macro')
 
             # Get prediction form model on validation data.
             print('- Validation on batches...')
             valid_labels, valid_predict, val_loss = self.validation(self.valid_dataloader, device)
             #val_acc = roc_auc_score(valid_labels, valid_predict, multi_class='ovr', average='macro')
-            try:
-                val_acc = classification_report(valid_labels, valid_predict)['macro avg']['f1-score']
-                print('f1-macro!')
-            except:
-                val_acc = accuracy_score(valid_labels, valid_predict)
-
+            # try:
+            #     val_acc = classification_report(valid_labels, valid_predict)['macro avg']['f1-score']
+            #     print('f1-macro!')
+            # except:
+            #     val_acc = accuracy_score(valid_labels, valid_predict)
+            _, _, val_acc, _ = precision_recall_fscore_support(valid_labels, valid_predict, average='macro')
 
 
             # Print loss and accuracy values to see how training evolves.
