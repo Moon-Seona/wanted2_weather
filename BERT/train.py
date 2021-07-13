@@ -27,6 +27,8 @@ import sys
 
 sys.path.append("./")
 
+path = '/data/weather2/open/'  # SA
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 labels_ids ={}
@@ -106,19 +108,19 @@ class Gpt2ClassificationCollator(object):
 
 
 class ProblemDataset(Dataset):
-    def __init__(self, path, use_tokenizer, val):
+    def __init__(self, file, use_tokenizer, val):
 
         self.texts = []
         self.labels = []
         # Since the labels are defined by folders with data we loop
         # through each label.
-        data = pd.read_csv(path).fillna('error')
+        data = pd.read_csv(file).fillna('error')
 
-        self.texts = data['요약문_한글키워드'] + data['요약문_기대효과']
+        #self.texts = data['요약문_한글키워드'] + data['요약문_기대효과']
 
-        # text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
-        # for i in tqdm(range(len(text))):
-        #     self.texts.append(summarizer.summarize(text[i], ratio=0.3))
+        text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
+        for i in tqdm(range(len(text))):
+            self.texts.append(summarizer.summarize(text[i], ratio=0.3))
 
         if val == 'test' :
             self.labels = np.zeros(len(data))
@@ -166,8 +168,6 @@ class L1Trainer():
           bos_token='</s>', eos_token='</s>', unk_token='<unk>',
           pad_token='<pad>', mask_token='<mask>')
 
-        #path = '../../data/' # YS
-        path = '/data/weather2/open/' # SA
         data = path + 'train.csv'
         test_data  = path + 'test.csv'
         dataset = ProblemDataset(data, tokenizer, val='train')
@@ -448,7 +448,6 @@ class L1Trainer():
         val_acc = roc_auc_score(valid_labels, valid_predict, multi_class='ovr', average='macro')
         print("- val_loss: %.5f  - valid_acc: %.5f" % (val_loss,  val_acc))
     def save_csv(self, predict_label, ver):
-        path = '~/data/weather2/open/'
         df = pd.read_csv(path + 'sample_submission.csv')
         df['label'] = predict_label
         df.to_csv(f'./BERT_submission_{ver}.csv', index=False)
@@ -465,7 +464,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=200)
     parser.add_argument('--lr', type=float, default=2e-5) # default is 5e-5,
-    parser.add_argument('--version', type=int, default=4)
+    parser.add_argument('--version', type=int, default=5)
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
