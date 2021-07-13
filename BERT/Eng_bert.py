@@ -27,6 +27,9 @@ sys.path.append("./")
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+path = '../../data/' # SH
+#path = '/data/weather2/open/'  # SA
+
 labels_ids ={}
 for i in range(46):
     labels_ids[i]=i
@@ -104,7 +107,7 @@ class Gpt2ClassificationCollator(object):
 
 
 class ProblemDataset(Dataset):
-    def __init__(self, path, val):
+    def __init__(self, file, val):
 
         self.texts = []
         self.labels = []
@@ -112,7 +115,7 @@ class ProblemDataset(Dataset):
         # Since the labels are defined by folders with data we loop
         # through each label.
 
-        data = pd.read_csv(path).fillna('error')
+        data = pd.read_csv(file).fillna('error')
 
         self.texts = data['요약문_영문키워드']
         if val == 'test':
@@ -155,8 +158,6 @@ class L1Trainer():
         # Define PAD Token = EOS Token = 50256
         tokenizer.pad_token = tokenizer.eos_token
 
-
-        path = '../../data/'
         data = path + 'train.csv'
         test_data = path + 'test.csv'
         dataset = ProblemDataset(data, val='train')
@@ -458,7 +459,6 @@ class L1Trainer():
         print("- val_loss: %.5f  - valid_acc: %.5f" % (val_loss,  val_acc))
     def save_csv(self, predict_label, ver):
         #path = '~/data/weather2/open/'
-        path = '../../data/'
         df = pd.read_csv(path + 'sample_submission.csv')
         df['label'] = predict_label
         df.to_csv(f'./ENG_submission_{ver}.csv', index=False)

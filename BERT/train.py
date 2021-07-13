@@ -28,6 +28,7 @@ import sys
 sys.path.append("./")
 
 path = '/data/weather2/open/'  # SA
+#path = '../../data/' # SH
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -460,7 +461,7 @@ def main(epoch, batch_size, max_length, lr, ver):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=10)
+    parser.add_argument('--epoch', type=int, default=0)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=200)
     parser.add_argument('--lr', type=float, default=2e-5) # default is 5e-5,
