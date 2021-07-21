@@ -21,14 +21,15 @@ from tqdm import tqdm
 #from lexrankr import LexRank
 from summa import summarizer
 
-import os
+from models import *
 
+import os
 import sys
 
 sys.path.append("./")
 
-path = '/data/weather2/open/'  # SA
-#path = '../../data/' # SH
+#path = '/data/weather2/open/'  # SA
+path = '../../data/' # SH, YS
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -36,7 +37,7 @@ labels_ids ={}
 for i in range(46):
     labels_ids[i]=i
 
-def padding(aa,max_len,padding_value=3):
+def padding(aa,max_len,padding_value=-1):
 
     rows = []
     for a in aa:
@@ -107,6 +108,42 @@ class Gpt2ClassificationCollator(object):
 
         return inputs
 
+class Gpt2ClassificationCollator2(object):
+
+    def __init__(self, use_tokenizer, labels_encoder, max_sequence_len): # max_sequence_len=None
+        # Tokenizer to be used inside the class.
+        self.use_tokenizer = use_tokenizer
+        # Check max sequence length.
+        self.max_sequence_len = use_tokenizer.model_max_length if max_sequence_len is None else max_sequence_len
+        # Label encoder used inside the class.
+        self.labels_encoder = labels_encoder
+
+        return
+
+    def __call__(self, sequences):
+
+        # Get all texts from sequences list.
+        text1 = [sequence['text1'] for sequence in sequences]
+        text2 = [sequence['text2'] for sequence in sequences]
+
+        # Get all labels from sequences list.
+        labels = [sequence['label'] for sequence in sequences]
+        # Encode all labels using label encoder.
+        labels = [self.labels_encoder[label] for label in labels]
+        # Call tokenizer on all texts to convert into tensors of numbers with
+        # appropriate padding.
+        inputs = self.use_tokenizer(text=text2, return_tensors="pt", truncation=True, padding=True,
+                                    max_length=self.max_sequence_len)
+        
+        # 수동 패딩.... ^_^
+        inputs_pad = padding(inputs['input_ids'],self.max_sequence_len,-1)
+        new_inputs = {}
+        new_inputs['input_ids'] = torch.tensor(inputs_pad)
+        # Update the inputs with the associated encoded labels as tensor.
+        new_inputs.update({'text1': torch.tensor(text1)})
+        new_inputs.update({'labels': torch.tensor(labels)})
+
+        return new_inputs
 
 class ProblemDataset(Dataset):
     def __init__(self, file, use_tokenizer, val):
@@ -116,12 +153,12 @@ class ProblemDataset(Dataset):
         # Since the labels are defined by folders with data we loop
         # through each label.
         data = pd.read_csv(file).fillna('error')
+        
+        self.texts = data['과제명'] + data['사업_부처명']
 
-        #self.texts = data['요약문_한글키워드'] + data['요약문_기대효과']
-
-        text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
-        for i in tqdm(range(len(text))):
-            self.texts.append(summarizer.summarize(text[i], ratio=0.3))
+#         text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
+#         for i in tqdm(range(len(text))):
+#             self.texts.append(summarizer.summarize(text[i], ratio=0.3))
 
         if val == 'test' :
             self.labels = np.zeros(len(data))
@@ -159,6 +196,61 @@ class ProblemDataset(Dataset):
 
         return {'text': self.texts[item],
                 'label': self.labels[item]}
+    
+class ProblemDataset2(Dataset): # 사업 부처명 임베딩
+    def __init__(self, file, use_tokenizer, val):
+
+        self.texts = []
+        self.labels = []
+        # Since the labels are defined by folders with data we loop
+        # through each label.
+        data = pd.read_csv(file).fillna('error')
+        
+        self.name_dict = {}
+        idx = 0
+        for i in data['사업_부처명']:
+            if i not in self.name_dict.keys():
+                self.name_dict[i] = idx
+                idx += 1
+        self.text1 = [self.name_dict[i] for i in data['사업_부처명']] # string to num
+        self.text2 = data['과제명'] 
+
+        if val == 'test' :
+            self.labels = np.zeros(len(data))
+
+        else :
+            data['label']=data['label'].astype(int)
+            self.labels = data['label']
+
+        # Number of exmaples.
+        self.n_examples = len(self.labels)
+
+        return
+    
+    def __dic__(self):
+        return self.name_dict
+
+    def __len__(self):
+        r"""When used `len` return the number of examples.
+        """
+
+        return self.n_examples
+
+    def __getitem__(self, item):
+        r"""Given an index return an example from the position.
+
+        Arguments:
+          item (:obj:`int`):
+              Index position to pick an example to return.
+        Returns:
+          :obj:`Dict[str, str]`: Dictionary of inputs that contain text and
+          asociated labels.
+        """
+
+        return {'text1': self.text1[item],
+                'text2': self.text2[item],
+                'label': self.labels[item]}
+
 class L1Trainer():
     def __init__(self, batch_size, max_length):
 
@@ -171,7 +263,7 @@ class L1Trainer():
 
         data = path + 'train.csv'
         test_data  = path + 'test.csv'
-        dataset = ProblemDataset(data, tokenizer, val='train')
+        dataset = ProblemDataset2(data, tokenizer, val='train')
         train_len = int(len(dataset) * 0.8)
         val_len  = len(dataset) - train_len
         train_dataset, val_dataset = torch.utils.data.random_split(dataset, (train_len, val_len))
@@ -179,24 +271,10 @@ class L1Trainer():
 
         print('- finish load dataset!')
 
-        gpt2_classificaiton_collator = Gpt2ClassificationCollator(use_tokenizer=tokenizer,
+        gpt2_classificaiton_collator = Gpt2ClassificationCollator2(use_tokenizer=tokenizer,
                                                                   labels_encoder=labels_ids,
                                                                   max_sequence_len=self.max_length)
 
-        # target = np.array([str(data_item['label']) for data_item in train_dataset])
-        # print(target)
-        #
-        # class_sample_count = np.array(
-        #     [len(np.where(target == t)[0]) for t in np.unique(target)])
-        #
-        # samples_weight = 1. / class_sample_count
-        # #samples_weight = np.array([weight[t] for t in target])
-        #
-        # samples_weight = torch.from_numpy(samples_weight)
-        # samples_weight = samples_weight.double()
-        # sampler = WeightedRandomSampler(samples_weight, len(samples_weight))
-        # print(class_sample_count)
-        # print(samples_weight)
 
         self.train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=gpt2_classificaiton_collator)
         self.valid_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=gpt2_classificaiton_collator)
@@ -204,8 +282,11 @@ class L1Trainer():
 
         model_config = GPT2Config.from_pretrained(pretrained_model_name_or_path='skt/kogpt2-base-v2', num_labels=len(set(labels_ids.values())))
 
-        self.model = GPT2ForSequenceClassification.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
-
+        #self.model = GPT2ForSequenceClassification.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
+        name_num = max(dataset.__dic__().values()) + 1
+        subject_num = 100000
+        self.model = BASE(name_num, subject_num, self.max_length, max(labels_ids)+1).to(device)
+        
     def train(self,dataloader, optimizer_, scheduler_, device_):
 
         # Use global variable for model.
@@ -227,7 +308,7 @@ class L1Trainer():
 
             # move batch to device
             batch = {k:v.type(torch.long).to(device_) for k,v in batch.items()}
-
+            
             # Always clear any previously calculated gradients before performing a
             # backward pass.
             self.model.zero_grad()
@@ -237,13 +318,17 @@ class L1Trainer():
             # have provided the `labels`.
             # The documentation for this a bert model function is here:
             # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
-            outputs = self.model(**batch)
+            
+            #outputs = self.model(**batch)
+            outputs = self.model(batch['input_ids'], batch['text1'], batch['labels'])
 
             # The call to `model` always returns a tuple, so we need to pull the
             # loss value out of the tuple along with the logits. We will use logits
             # later to calculate training accuracy.
-            loss, logits = outputs[:2]
-
+            
+            #loss, logits = outputs[:2]
+            loss = outputs
+            
             # Accumulate the training loss over all of the batches so that we can
             # calculate the average loss at the end. `loss` is a Tensor containing a
             # single value; the `.item()` function just returns the Python value
@@ -461,11 +546,11 @@ def main(epoch, batch_size, max_length, lr, ver):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=0)
+    parser.add_argument('--epoch', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--max_length', type=int, default=200)
+    parser.add_argument('--max_length', type=int, default=50)
     parser.add_argument('--lr', type=float, default=2e-5) # default is 5e-5,
-    parser.add_argument('--version', type=int, default=5)
+    parser.add_argument('--version', type=int, default=13)
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
