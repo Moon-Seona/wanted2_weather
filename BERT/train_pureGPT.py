@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 
 import torch
 from transformers import GPT2LMHeadModel, PreTrainedTokenizerFast, PreTrainedTokenizer
-from kobert_tokenizer import KoBERTTokenizer
+#from kobert_tokenizer import KoBERTTokenizer
 from transformers import (set_seed,
                           TrainingArguments,
                           Trainer,
@@ -16,7 +16,8 @@ from transformers import (set_seed,
                           GPT2ForSequenceClassification,
                           BertTokenizer,
                           BertConfig,
-                          BertForSequenceClassification)
+                          BertForSequenceClassification,
+                          GPT2Model)
 
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import pandas as pd
@@ -35,8 +36,8 @@ import sys
 
 sys.path.append("./")
 
-path = '/data/weather2/open/'  # SA
-#path = '../../data/'  # SH, YS
+#path = '/data/weather2/open/'  # SA
+path = '../data/open/'  # SH, YS
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -135,14 +136,14 @@ class ProblemDataset(Dataset):
         # through each label.
         data = pd.read_csv(file).fillna('error')
 
-        self.texts = data['과제명'] + ' @ ' + data['사업_부처명'] + ' @ ' + data['사업명']
-        okt = Okt()
+        self.texts = data['과제명']
+        '''okt = Okt()
 
         clean_texts = []
         for i in tqdm(self.texts) :
             pre_text = preprocessing(i, okt, remove_stopwords=True, stop_words=stop_words)
             clean_texts.append(pre_text)
-        self.texts = clean_texts
+        self.texts = clean_texts'''
 
         #         text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
         #         for i in tqdm(range(len(text))):
@@ -231,7 +232,9 @@ class L1Trainer():
                                                   num_labels=len(set(labels_ids.values())))
         #model_config = BertConfig.from_pretrained(pretrained_model_name_or_path='skt/kobert-base-v1',
         #                                          num_labels=len(set(labels_ids.values())))
-        self.model = GPT2ForSequenceClassification.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
+        #self.model = GPT2ForSequenceClassification.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
+        self.model = GPT2Model.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
+
         #self.model = BertForSequenceClassification.from_pretrained('skt/kobert-base-v1', config=model_config).to(device)
 
     def train(self, dataloader, optimizer_, scheduler_, device_):
@@ -253,7 +256,9 @@ class L1Trainer():
             true_labels += batch['labels'].numpy().flatten().tolist()
 
             # move batch to device
+
             batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
+            batch.pop('labels')
 
             # Always clear any previously calculated gradients before performing a
             # backward pass.
@@ -265,7 +270,12 @@ class L1Trainer():
             # The documentation for this a bert model function is here:
             # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
 
-            outputs = self.model(**batch)
+            outputs = self.model(**batch, output_hidden_states=True)
+            print(outputs.keys())
+            outputs = outputs.to_tuple()
+            print(len(outputs)) #  2 tuple
+            print(outputs[0].shape)  # batch, x, hidden
+
             #outputs = self.model(batch['input_ids'], batch['text1'], batch['labels'])
 
             # The call to `model` always returns a tuple, so we need to pull the
