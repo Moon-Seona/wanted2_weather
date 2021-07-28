@@ -29,15 +29,15 @@ from konlpy.tag import Okt
 # from lexrankr import LexRank
 from summa import summarizer
 
-#from models import *
+from models import *
 
 import os
 import sys
 
 sys.path.append("./")
 
-#path = '/data/weather2/open/'  # SA
-path = '../data/open/'  # SH, YS
+path = '/data/weather2/open/'  # SA
+#path = '../data/open/'  # SH, YS
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -233,11 +233,16 @@ class L1Trainer():
         #model_config = BertConfig.from_pretrained(pretrained_model_name_or_path='skt/kobert-base-v1',
         #                                          num_labels=len(set(labels_ids.values())))
         #self.model = GPT2ForSequenceClassification.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
-        self.model = GPT2Model.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
+        #self.model = GPT2Model.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
+
+        self.model = for_puregpt(model_config, 768, len(set(labels_ids.values()))).to(device)
+
 
         #self.model = BertForSequenceClassification.from_pretrained('skt/kobert-base-v1', config=model_config).to(device)
 
-    def train(self, dataloader, optimizer_, scheduler_, device_):
+        self.CEloss = torch.nn.CrossEntropyLoss()
+
+    def train(self, dataloader, optimizer_, scheduler_, device_, CEloss_):
 
         # Use global variable for model.
         # Tracking variables.
@@ -258,7 +263,7 @@ class L1Trainer():
             # move batch to device
 
             batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
-            batch.pop('labels')
+            iter_labels = batch.pop('labels')
 
             # Always clear any previously calculated gradients before performing a
             # backward pass.
@@ -270,11 +275,7 @@ class L1Trainer():
             # The documentation for this a bert model function is here:
             # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
 
-            outputs = self.model(**batch, output_hidden_states=True)
-            print(outputs.keys())
-            outputs = outputs.to_tuple()
-            print(len(outputs)) #  2 tuple
-            print(outputs[0].shape)  # batch, x, hidden
+            outputs = self.model(batch)
 
             #outputs = self.model(batch['input_ids'], batch['text1'], batch['labels'])
 
@@ -282,8 +283,9 @@ class L1Trainer():
             # loss value out of the tuple along with the logits. We will use logits
             # later to calculate training accuracy.
 
-            loss, logits = outputs[:2]
-            #loss = outputs
+            #loss, logits = outputs[:2]
+            loss = CEloss_(outputs, iter_labels)
+            logits = outputs #torch.argmax(outputs, dim=-1)
 
             # Accumulate the training loss over all of the batches so that we can
             # calculate the average loss at the end. `loss` is a Tensor containing a
@@ -318,7 +320,7 @@ class L1Trainer():
         # Return all true labels and prediction for future evaluations.
         return true_labels, predictions_labels, avg_epoch_loss
 
-    def validation(self, dataloader, device_):
+    def validation(self, dataloader, device_, CEloss_):
         # Tracking variables
         predictions_labels = []
         true_labels = []
@@ -336,6 +338,7 @@ class L1Trainer():
 
             # move batch to device
             batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
+            iter_labels = batch.pop('labels')
 
             # Telling the model not to compute or store gradients, saving memory and
             # speeding up validation
@@ -347,12 +350,14 @@ class L1Trainer():
                 # differentiates sentence 1 and 2 in 2-sentence tasks.
                 # The documentation for this `model` function is here:
                 # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
-                outputs = self.model(**batch)
+                outputs = self.model(batch)
 
                 # The call to `model` always returns a tuple, so we need to pull the
                 # loss value out of the tuple along with the logits. We will use logits
                 # later to to calculate training accuracy.
-                loss, logits = outputs[:2]
+                #loss, logits = outputs[:2]
+                loss = CEloss_(iter_labels, outputs)
+                logits = outputs
 
                 # Move logits and labels to CPU
                 logits = logits.detach().cpu().numpy()
@@ -375,7 +380,7 @@ class L1Trainer():
         # Return all true labels and prediciton for future evaluations.
         return true_labels, predictions_labels, avg_epoch_loss
 
-    def test(self, dataloader, device_):
+    def test(self, dataloader, device_, CEloss_):
         # Tracking variables
         predictions_labels = []
 
@@ -387,6 +392,7 @@ class L1Trainer():
         for batch in tqdm(dataloader, total=len(dataloader)):
             # move batch to device
             batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
+            iter_labels = batch.pop('labels')
 
             # Telling the model not to compute or store gradients, saving memory and
             # speeding up validation
@@ -398,12 +404,15 @@ class L1Trainer():
                 # differentiates sentence 1 and 2 in 2-sentence tasks.
                 # The documentation for this `model` function is here:
                 # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
-                outputs = self.model(**batch)
+                outputs = self.model(batch)
 
                 # The call to `model` always returns a tuple, so we need to pull the
                 # loss value out of the tuple along with the logits. We will use logits
                 # later to to calculate training accuracy.
-                loss, logits = outputs[:2]
+
+                # loss, logits = outputs[:2]
+                loss = CEloss_(iter_labels, outputs)
+                logits = outputs
 
                 # Move logits and labels to CPU
                 logits = logits.detach().cpu().numpy()
@@ -451,13 +460,13 @@ class L1Trainer():
 
             print('- Training on batches...')
             # Perform one full pass over the training set.
-            train_labels, train_predict, train_loss = self.train(self.train_dataloader, optimizer, scheduler, device)
+            train_labels, train_predict, train_loss = self.train(self.train_dataloader, optimizer, scheduler, device, self.CEloss)
             # train_acc = roc_auc_score(train_labels, train_predict, multi_class='ovr', average='macro')
             _, _, train_acc, _ = precision_recall_fscore_support(train_labels, train_predict, average='macro')
 
             # Get prediction form model on validation data.
             print('- Validation on batches...')
-            valid_labels, valid_predict, val_loss = self.validation(self.valid_dataloader, device)
+            valid_labels, valid_predict, val_loss = self.validation(self.valid_dataloader, device, self.CEloss)
             # val_acc = roc_auc_score(valid_labels, valid_predict, multi_class='ovr', average='macro')
             _, _, val_acc, _ = precision_recall_fscore_support(valid_labels, valid_predict, average='macro')
 
@@ -473,7 +482,7 @@ class L1Trainer():
 
         print("- best epoch: %d - best valid acc: %.5f" % (best_epoch, best_val_acc))
         self.load_model(ver)
-        predict_label = self.test(self.test_dataloader, device)
+        predict_label = self.test(self.test_dataloader, device, self.CEloss)
         self.save_csv(predict_label, ver)
 
     ### maek def for save predict label from BERT to csv file
@@ -507,7 +516,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=10)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=2)
     parser.add_argument('--max_length', type=int, default=200)
     parser.add_argument('--lr', type=float, default=2e-5)  # default is 5e-5,
     parser.add_argument('--version', type=int, default=19)

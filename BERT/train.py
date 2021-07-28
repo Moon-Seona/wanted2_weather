@@ -119,7 +119,7 @@ class Gpt2ClassificationCollator(object):
         labels = [self.labels_encoder[label] for label in labels]
         # Call tokenizer on all texts to convert into tensors of numbers with
         # appropriate padding.
-        inputs = self.use_tokenizer(text=texts, return_tensors="pt", padding=True, truncation=True,
+        inputs = self.use_tokenizer(text=texts, return_tensors="pt", padding=True, truncation=True, # TypeError: TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]
                                     max_length=self.max_sequence_len)
         # Update the inputs with the associated encoded labels as tensor.
         inputs.update({'labels': torch.tensor(labels)})
@@ -135,14 +135,16 @@ class ProblemDataset(Dataset):
         # through each label.
         data = pd.read_csv(file).fillna('error')
 
-        self.texts = data['과제명'] + ' @ ' + data['사업_부처명'] + ' @ ' + data['사업명']
-        okt = Okt()
+        self.texts = data['과제명'] + ' @ ' + data['사업_부처명'] + ' @ ' + data['사업명'] # @, &, %, +, !, //, ?
 
-        clean_texts = []
-        for i in tqdm(self.texts) :
-            pre_text = preprocessing(i, okt, remove_stopwords=True, stop_words=stop_words)
-            clean_texts.append(pre_text)
-        self.texts = clean_texts
+       # okt = Okt()
+        # clean_texts = []
+        # for i in tqdm(range(len(self.texts))) :
+        #     pre_text = preprocessing(i, okt, remove_stopwords=True, stop_words=stop_words)
+        #     clean_texts.append(pre_text)
+        # self.texts = clean_texts
+        # 사용 안하는 이유1: 전후 차이가 거의 없거나 오히려 이상해짐
+        #               2: string -> list 로 변해서 다시 string 으로 형변환 필요
 
         #         text = data['요약문_기대효과'] + '\n\n' + data['요약문_연구목표'] + '\n\n' + data['요약문_연구내용']
         #         for i in tqdm(range(len(text))):
