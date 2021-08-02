@@ -87,3 +87,20 @@ class for_puregpt(nn.Module):
         gpt = self.softmax(gpt)
 
         return gpt
+
+class BERTClassifier(nn.Module):
+    def __init__(self, bert, hidden_size=768, num_classes=46, dr_rate=0.5):
+        super(BERTClassifier,self).__init__()
+        self.dr_rate = dr_rate
+        self.bert = bert
+        self.classifier = nn.Linear(hidden_size, num_classes)
+
+
+    def forward(self, token_ids, valid_length, segment_ids):
+        attention_mask = self.gen_attention_mask(token_ids, valid_length)
+
+        _, pooler = self.bert(input_ids=token_ids, token_type_ids=segment_ids.long(), attention_mask=attention_mask.float())
+
+        if self.dr_rate:
+            pooler = self.dropout(pooler)
+        return self.classifier(pooler)
