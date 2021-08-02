@@ -135,8 +135,9 @@ class ProblemDataset(Dataset):
         # Since the labels are defined by folders with data we loop
         # through each label.
         data = pd.read_csv(file).fillna('error')
+        data['제출년도'] = list(map(str, data['제출년도']))
 
-        self.texts = data['과제명'] + ' ' + data['사업_부처명'] + ' ' + data['사업명'] # @, &, %, +, !, //, ?
+        self.texts = data['과제명'] + ' ' + data['사업_부처명'] + ' ' + data['사업명'] + ' ' + data['제출년도']
 
        # okt = Okt()
         # clean_texts = []
@@ -502,8 +503,8 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=200)
-    parser.add_argument('--lr', type=float, default=5e-5)  # default is 5e-5,
-    parser.add_argument('--version', type=int, default=27)
+    parser.add_argument('--lr', type=float, default=2e-5)  # default is 5e-5,
+    parser.add_argument('--version', type=int, default=30)
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
