@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 
 import torch
 from transformers import GPT2LMHeadModel, PreTrainedTokenizerFast, PreTrainedTokenizer
-from kobert_tokenizer import KoBERTTokenizer
+# from kobert_tokenizer import KoBERTTokenizer
 from transformers import (set_seed,
                           TrainingArguments,
                           Trainer,
@@ -26,7 +26,7 @@ import re
 from konlpy.tag import Okt
 
 # from lexrankr import LexRank
-from summa import summarizer
+# from summa import summarizer
 
 #from models import *
 
@@ -35,8 +35,10 @@ import sys
 
 sys.path.append("./")
 
-path = '/data/weather2/open/'  # SA
-#path = '../../data/'  # SH, YS
+# path = '/data/weather2/open/'  # SA
+#path = '../../data/'  # YS
+path = '../data/open/'  # SH
+# path = '../../dacon_NLP_Data/' # EY
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -69,7 +71,6 @@ def preprocessing(text, okt, remove_stopwords=False, stop_words=[]): #
 class Gpt2ClassificationCollator(object):
     r"""
     Data Collator used for GPT2 in a classificaiton rask.
-
     It uses a given tokenizer and label encoder to convert any text and labels to numbers that
     can go straight into a GPT2 model.
     This class is built with reusability in mind: it can be used as is as long
@@ -134,8 +135,9 @@ class ProblemDataset(Dataset):
         # Since the labels are defined by folders with data we loop
         # through each label.
         data = pd.read_csv(file).fillna('error')
+        data['제출년도'] = list(map(str, data['제출년도']))
 
-        self.texts = data['과제명'] + ' @ ' + data['사업_부처명'] + ' @ ' + data['사업명'] # @, &, %, +, !, //, ?
+        self.texts = data['과제명'] + ' ' + data['사업_부처명'] + ' ' + data['사업명'] + ' ' + data['제출년도'] # @, &, %, +, !, //, ?
 
        # okt = Okt()
         # clean_texts = []
@@ -175,7 +177,6 @@ class ProblemDataset(Dataset):
 
     def __getitem__(self, item):
         r"""Given an index return an example from the position.
-
         Arguments:
           item (:obj:`int`):
               Index position to pick an example to return.
@@ -498,11 +499,11 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=10)
-    parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--max_length', type=int, default=200)
+    parser.add_argument('--epoch', type=int, default=50)
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--max_length', type=int, default=400)
     parser.add_argument('--lr', type=float, default=2e-5)  # default is 5e-5,
-    parser.add_argument('--version', type=int, default=19)
+    parser.add_argument('--version', type=int, default=28)
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
