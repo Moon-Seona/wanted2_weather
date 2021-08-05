@@ -1,6 +1,7 @@
 # from ml_things import plot_dict, plot_confusion_matrix, fix_text
 import re
 import sys
+import os
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,8 @@ from transformers import (
     GPT2Config,
     PreTrainedTokenizerFast
 )
+from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
 
 # from lexrankr import LexRank
 
@@ -32,7 +35,10 @@ sys.path.append("../")
 #path = '/data/weather2/open/'  # SA
 path = '../data/open/'  # SH
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"]= "1"
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 labels_ids = {}
 for i in range(46):
@@ -354,6 +360,7 @@ class L1Trainer():
 
         # Calculate the average loss over the training data.
         avg_epoch_loss = total_loss / len(dataloader)
+#         writer.add_scalar('Loss/valid_loss', avg_epoch_loss, epoch)
 
         # Return all true labels and prediciton for future evaluations.
         return true_labels, predictions_labels, avg_epoch_loss
@@ -446,6 +453,11 @@ class L1Trainer():
             # Print loss and accuracy values to see how training evolves.
             print("- train_loss: %.5f - val_loss: %.5f - train_acc: %.5f - valid_acc: %.5f" % (
             train_loss, val_loss, train_acc, val_acc))
+            writer.add_scalar('Loss/train_loss', train_loss, epoch)
+            writer.add_scalar('Loss/valid_loss', val_loss, epoch)
+            writer.add_scalar('acc/train_acc', train_acc, epoch)
+            writer.add_scalar('acc/valid_acc', val_acc, epoch)
+            
             print()
 
             if val_acc >= best_val_acc:
@@ -491,9 +503,13 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--max_length', type=int, default=400)
-    parser.add_argument('--lr', type=float, default=2e-6)  # default is 5e-5,
-    parser.add_argument('--version', type=int, default=20)
+    parser.add_argument('--lr', type=float, default=5e-5)  # default is 5e-5,
+    parser.add_argument('--version', type=int, default=38)
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
+    
+    eventid = datetime.now().strftime('%m-%d %H:%M') # 월-일 시간:분
+    writer = SummaryWriter(f'runs/{args.version}_{args.lr}_{args.max_length}_{args.batch_size}_{eventid}')
+    
     main(args.epoch, args.batch_size, args.max_length, args.lr, args.version)
