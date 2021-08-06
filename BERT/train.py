@@ -25,13 +25,13 @@ from transformers import (
 sys.path.append("./")
 
 # path = '/data/weather2/open/'  # SA
-path = '../../data/' # YS
-# path = '../data/open/'  # SH
+# path = '../../data/' # YS
+path = '../data/open/'  # SH
 # path = '../../dacon_NLP_Data/' # EY
 
 ##### GPU가 두 개 일때 다른 GPU를 쓰고 싶으면...
-# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"]= "1"
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"]= "1"
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -130,7 +130,7 @@ class ProblemDataset(Dataset):
         data = pd.read_csv(file).fillna('error')
         data['제출년도'] = list(map(str, data['제출년도']))
 
-        self.texts = data['과제명'] + ' ' + data['사업_부처명'] + ' ' + data['사업명'] + ' ' + data['제출년도'] + ' ' + data['요약문_한글키워드'] # @, &, %, +, !, //, ?
+        self.texts = data['과제명'] + '[SEP]' + data['사업_부처명'] + '[SEP]' + data['사업명'] + '[SEP]' + data['제출년도'] # @, &, %, +, !, //, ?
 
        # okt = Okt()
         # clean_texts = []
@@ -202,10 +202,11 @@ class L1Trainer():
         data = path + 'train.csv'
         test_data = path + 'test.csv'
         dataset = ProblemDataset(data, tokenizer, stop_words, val='train')
-        train_len = int(len(dataset) * 0.8)
-        val_len = len(dataset) - train_len
-        train_dataset, val_dataset = torch.utils.data.random_split(dataset, (train_len, val_len))
-        test_dataset = ProblemDataset(test_data, tokenizer, stop_words, val='test')
+        train_len = int(len(dataset) * 0.9)
+        val_len = int((len(dataset) - train_len)/2)
+        test_len = len(dataset) - train_len - valid_len
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(dataset, (train_len, val_len, test_len))
+        test_dataset2 = ProblemDataset(test_data, tokenizer, stop_words, val='test')
 
         print('- finish load dataset!')
 
@@ -213,6 +214,7 @@ class L1Trainer():
         self.train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=gpt2_classificaiton_collator)
         self.valid_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=gpt2_classificaiton_collator)
         self.test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=gpt2_classificaiton_collator)
+        self.test_dataloader2 = torch.utils.data.DataLoader(test_dataset2, batch_size=self.batch_size, shuffle=False, collate_fn=gpt2_classificaiton_collator)
 
         if model_name == 'GPT2':
             model_config = GPT2Config.from_pretrained(pretrained_model_name_or_path='skt/kogpt2-base-v2', num_labels=len(set(labels_ids.values())))
@@ -414,8 +416,12 @@ class L1Trainer():
                                                     
         # Loop through each epoch.
         print('- Epoch')
-        best_val_acc = 0
         best_epoch = -1
+        best_val_acc = 0
+        best_valid_loss = 0
+        best_test_acc = 0
+        best_test_loss = 0
+        
         for epoch in tqdm(range(epochs)):
             print()
 
@@ -428,25 +434,34 @@ class L1Trainer():
             print('- Validation on batches...')
             valid_labels, valid_predict, val_loss = self.validation(self.valid_dataloader, device)
             _, _, val_acc, _ = precision_recall_fscore_support(valid_labels, valid_predict, average='macro')
+            
+            test_labels, test_predict, test_loss = self.validation(self.test_dataloader, device)
+            _, _, test_acc, _ = precision_recall_fscore_support(test_labels, test_predict, average='macro')
 
             # Print loss and accuracy values to see how training evolves.
             print("- train_loss: %.5f - val_loss: %.5f - train_acc: %.5f - valid_acc: %.5f" % (
             train_loss, val_loss, train_acc, val_acc))
             writer.add_scalar('Loss/train_loss', train_loss, epoch)
             writer.add_scalar('Loss/valid_loss', val_loss, epoch)
+            writer.add_scalar('Loss/test_loss', test_loss, epoch)
             writer.add_scalar('acc/train_acc', train_acc, epoch)
             writer.add_scalar('acc/valid_acc', val_acc, epoch)
+            writer.add_scalar('acc/test_acc', test_acc, epoch)
             
             print()
 
             if val_acc >= best_val_acc:
-                best_val_acc = val_acc
                 best_epoch = epoch
                 self.save_model(ver)
+                best_val_acc = val_acc
+                best_valid_loss = val_loss
+                best_test_acc = test_acc
+                best_test_loss = test_loss
 
-        print("- best epoch: %d - best valid acc: %.5f" % (best_epoch, best_val_acc))
+        print("- best epoch: %d - best valid acc: %.5f -  best valid loss: %.5f" % (best_epoch, best_val_acc, best_valid_loss))
+        print("- best valid acc: %.5f -  best valid loss: %.5f" % (best_test_acc, best_test_loss))
         self.load_model(ver)
-        predict_label = self.test(self.test_dataloader, device)
+        predict_label = self.test(self.test_dataloader2, device)
         self.save_csv(predict_label, ver)
 
     ### maek def for save predict label from BERT to csv file
@@ -479,12 +494,12 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epoch', type=int, default=50)
+    parser.add_argument('--epoch', type=int, default=47)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=400)
-    parser.add_argument('--lr', type=float, default=2e-6)  # default is 5e-5,
-    parser.add_argument('--version', type=int, default=35)
-    parser.add_argument('--model_name', type=str, default='GPT2')
+    parser.add_argument('--lr', type=float, default=5e-5)  # default is 5e-5,
+    parser.add_argument('--version', type=int, default=37)
+    parser.add_argument('--model_name', type=str, default='BERT')
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
