@@ -1,44 +1,37 @@
-# from ml_things import plot_dict, plot_confusion_matrix, fix_text
-from sklearn.metrics import classification_report, accuracy_score, roc_auc_score, precision_recall_fscore_support
-from sklearn.metrics import f1_score  # macro f1 score를 쓰기 위해
-from sklearn.model_selection import train_test_split
-
-import torch
-from transformers import GPT2LMHeadModel, PreTrainedTokenizerFast, PreTrainedTokenizer
-# from kobert_tokenizer import KoBERTTokenizer
-from transformers import (set_seed,
-                          TrainingArguments,
-                          Trainer,
-                          GPT2Config,
-                          GPT2Tokenizer,
-                          AdamW,
-                          get_linear_schedule_with_warmup,
-                          GPT2ForSequenceClassification,
-                          BertTokenizer,
-                          BertConfig,
-                          BertForSequenceClassification)
-
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
 import re
-from konlpy.tag import Okt
-
-# from lexrankr import LexRank
-# from summa import summarizer
-
-#from models import *
-
-import os
 import sys
+import os
+import numpy as np
+import pandas as pd
+import torch
+
+from datetime import datetime
+from sklearn.metrics import roc_auc_score, precision_recall_fscore_support
+from tokenization_kobert import KoBertTokenizer
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+from transformers import (
+    AdamW,
+    BertConfig,
+    BertForSequenceClassification,
+    get_linear_schedule_with_warmup,
+    GPT2Config,
+    GPT2ForSequenceClassification,
+    PreTrainedTokenizerFast
+)
+
 
 sys.path.append("./")
 
 # path = '/data/weather2/open/'  # SA
-#path = '../../data/'  # YS
-path = '../data/open/'  # SH
+path = '../../data/' # YS
+# path = '../data/open/'  # SH
 # path = '../../dacon_NLP_Data/' # EY
+
+##### GPU가 두 개 일때 다른 GPU를 쓰고 싶으면...
+# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"]= "1"
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -46,22 +39,23 @@ labels_ids = {}
 for i in range(46):
     labels_ids[i] = i
 
+# 안쓰는 함수
+# def padding(aa, max_len, padding_value=-1):
+#     rows = []
+#     for a in aa:
+#         rows.append(np.pad(a, (0, max_len), 'constant', constant_values=padding_value)[:max_len])
+#     return np.concatenate(rows, axis=0).reshape(-1, max_len)
 
-def padding(aa, max_len, padding_value=-1):
-    rows = []
-    for a in aa:
-        rows.append(np.pad(a, (0, max_len), 'constant', constant_values=padding_value)[:max_len])
-    return np.concatenate(rows, axis=0).reshape(-1, max_len)
+# 안쓰는 함수
+# def preprocessing(text, okt, remove_stopwords=False, stop_words=[]): #
 
-def preprocessing(text, okt, remove_stopwords=False, stop_words=[]): #
+#     text=re.sub("[^가-힣ㄱ-ㅎㅏ-ㅣ]","", text)
+#     word_text=okt.morphs(text, stem=True)
+#     if remove_stopwords:
+#         word_review=[token for token in word_text if not token in stop_words]
+#     return word_review
 
-    text=re.sub("[^가-힣ㄱ-ㅎㅏ-ㅣ]","", text)
-    word_text=okt.morphs(text, stem=True)
-    if remove_stopwords:
-        word_review=[token for token in word_text if not token in stop_words]
-    return word_review
-
-    return 0
+#     return 0
 
 
 # batch_size = 16 #32 #64 #512
@@ -120,8 +114,7 @@ class Gpt2ClassificationCollator(object):
         labels = [self.labels_encoder[label] for label in labels]
         # Call tokenizer on all texts to convert into tensors of numbers with
         # appropriate padding.
-        inputs = self.use_tokenizer(text=texts, return_tensors="pt", padding=True, truncation=True, # TypeError: TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]
-                                    max_length=self.max_sequence_len)
+        inputs = self.use_tokenizer(text=texts, return_tensors="pt", padding=True, truncation=True, max_length=self.max_sequence_len)
         # Update the inputs with the associated encoded labels as tensor.
         inputs.update({'labels': torch.tensor(labels)})
 
@@ -137,7 +130,7 @@ class ProblemDataset(Dataset):
         data = pd.read_csv(file).fillna('error')
         data['제출년도'] = list(map(str, data['제출년도']))
 
-        self.texts = data['과제명'] + ' ' + data['사업_부처명'] + ' ' + data['사업명'] + ' ' + data['제출년도'] # @, &, %, +, !, //, ?
+        self.texts = data['과제명'] + ' ' + data['사업_부처명'] + ' ' + data['사업명'] + ' ' + data['제출년도'] + ' ' + data['요약문_한글키워드'] # @, &, %, +, !, //, ?
 
        # okt = Okt()
         # clean_texts = []
@@ -172,7 +165,6 @@ class ProblemDataset(Dataset):
     def __len__(self):
         r"""When used `len` return the number of examples.
         """
-
         return self.n_examples
 
     def __getitem__(self, item):
@@ -184,31 +176,29 @@ class ProblemDataset(Dataset):
           :obj:`Dict[str, str]`: Dictionary of inputs that contain text and
           asociated labels.
         """
-
         return {'text': self.texts[item],
                 'label': self.labels[item]}
 
 
 class L1Trainer():
-    def __init__(self, batch_size, max_length):
+    def __init__(self, batch_size, max_length, model_name):
 
         stop_words = []
         f = open("./korean_stopwords", 'r')
         lines = f.readlines()
         for line in lines:
             stop_words.append(line)
-            # print(line)
         f.close()
 
         self.batch_size = batch_size
         self.max_length = max_length
+        self.model_name = model_name
 
-        tokenizer = PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
-                                                            bos_token='</s>', eos_token='</s>', unk_token='<unk>',
-                                                            pad_token='<pad>', mask_token='<mask>')
-
-        #tokenizer = KoBERTTokenizer.from_pretrained('skt/kobert-base-v1')
-
+        if model_name == 'GPT2':
+            tokenizer = PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2", bos_token='</s>', eos_token='</s>', unk_token='<unk>', pad_token='<pad>', mask_token='<mask>')
+        elif model_name == 'BERT':
+            tokenizer = KoBertTokenizer.from_pretrained('monologg/kobert')
+            
         data = path + 'train.csv'
         test_data = path + 'test.csv'
         dataset = ProblemDataset(data, tokenizer, stop_words, val='train')
@@ -219,26 +209,19 @@ class L1Trainer():
 
         print('- finish load dataset!')
 
-        gpt2_classificaiton_collator = Gpt2ClassificationCollator(use_tokenizer=tokenizer,
-                                                                   labels_encoder=labels_ids,
-                                                                   max_sequence_len=self.max_length)
+        gpt2_classificaiton_collator = Gpt2ClassificationCollator(use_tokenizer=tokenizer, labels_encoder=labels_ids, max_sequence_len=self.max_length)
+        self.train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=gpt2_classificaiton_collator)
+        self.valid_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=gpt2_classificaiton_collator)
+        self.test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=gpt2_classificaiton_collator)
 
-        self.train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True,
-                                                            collate_fn=gpt2_classificaiton_collator)
-        self.valid_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=self.batch_size, shuffle=True,
-                                                            collate_fn=gpt2_classificaiton_collator)
-        self.test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False,
-                                                           collate_fn=gpt2_classificaiton_collator)
-
-        model_config = GPT2Config.from_pretrained(pretrained_model_name_or_path='skt/kogpt2-base-v2',
-                                                  num_labels=len(set(labels_ids.values())))
-        #model_config = BertConfig.from_pretrained(pretrained_model_name_or_path='skt/kobert-base-v1',
-        #                                          num_labels=len(set(labels_ids.values())))
-        self.model = GPT2ForSequenceClassification.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
-        #self.model = BertForSequenceClassification.from_pretrained('skt/kobert-base-v1', config=model_config).to(device)
+        if model_name == 'GPT2':
+            model_config = GPT2Config.from_pretrained(pretrained_model_name_or_path='skt/kogpt2-base-v2', num_labels=len(set(labels_ids.values())))
+            self.model = GPT2ForSequenceClassification.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
+        elif model_name == 'BERT':
+            model_config = BertConfig.from_pretrained(pretrained_model_name_or_path='skt/kobert-base-v1', num_labels=len(set(labels_ids.values())))
+            self.model = BertForSequenceClassification.from_pretrained('skt/kobert-base-v1', config=model_config).to(device)
 
     def train(self, dataloader, optimizer_, scheduler_, device_):
-
         # Use global variable for model.
         # Tracking variables.
         predictions_labels = []
@@ -269,7 +252,6 @@ class L1Trainer():
             # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
 
             outputs = self.model(**batch)
-            #outputs = self.model(batch['input_ids'], batch['text1'], batch['labels'])
 
             # The call to `model` always returns a tuple, so we need to pull the
             # loss value out of the tuple along with the logits. We will use logits
@@ -420,10 +402,7 @@ class L1Trainer():
     def ProblemTrain(self, epoch, lr, ver):
         epochs = epoch
 
-        optimizer = AdamW(self.model.parameters(),
-                          lr=lr,  # default is 5e-5, our notebook had 2e-5
-                          eps=1e-8  # default is 1e-8.
-                          )
+        optimizer = AdamW(self.model.parameters(),lr=lr, eps=1e-8) # default lr is 5e-5, our notebook had 2e-5, default eps is 1e-8.
 
         # Total number of training steps is number of batches * number of epochs.
         # `train_dataloader` contains batched data so `len(train_dataloader)` gives
@@ -431,10 +410,8 @@ class L1Trainer():
         total_steps = len(self.train_dataloader) * epochs
 
         # Create the learning rate scheduler.
-        scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                    num_warmup_steps=len(self.train_dataloader) * 2,
-                                                    # Default value in run_glue.py
-                                                    num_training_steps=total_steps)
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=len(self.train_dataloader) * 2, num_training_steps=total_steps) # Default value in run_glue.py
+                                                    
         # Loop through each epoch.
         print('- Epoch')
         best_val_acc = 0
@@ -445,18 +422,21 @@ class L1Trainer():
             print('- Training on batches...')
             # Perform one full pass over the training set.
             train_labels, train_predict, train_loss = self.train(self.train_dataloader, optimizer, scheduler, device)
-            # train_acc = roc_auc_score(train_labels, train_predict, multi_class='ovr', average='macro')
             _, _, train_acc, _ = precision_recall_fscore_support(train_labels, train_predict, average='macro')
 
             # Get prediction form model on validation data.
             print('- Validation on batches...')
             valid_labels, valid_predict, val_loss = self.validation(self.valid_dataloader, device)
-            # val_acc = roc_auc_score(valid_labels, valid_predict, multi_class='ovr', average='macro')
             _, _, val_acc, _ = precision_recall_fscore_support(valid_labels, valid_predict, average='macro')
 
             # Print loss and accuracy values to see how training evolves.
             print("- train_loss: %.5f - val_loss: %.5f - train_acc: %.5f - valid_acc: %.5f" % (
             train_loss, val_loss, train_acc, val_acc))
+            writer.add_scalar('Loss/train_loss', train_loss, epoch)
+            writer.add_scalar('Loss/valid_loss', val_loss, epoch)
+            writer.add_scalar('acc/train_acc', train_acc, epoch)
+            writer.add_scalar('acc/valid_acc', val_acc, epoch)
+            
             print()
 
             if val_acc >= best_val_acc:
@@ -490,8 +470,8 @@ class L1Trainer():
         print('- save csv file!')
 
 
-def main(epoch, batch_size, max_length, lr, ver):
-    model = L1Trainer(batch_size, max_length)
+def main(epoch, batch_size, max_length, lr, ver, model_name):
+    model = L1Trainer(batch_size, max_length, model_name)
     model.ProblemTrain(epoch, lr, ver)
 
 
@@ -500,11 +480,17 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--epoch', type=int, default=50)
-    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=400)
-    parser.add_argument('--lr', type=float, default=2e-5)  # default is 5e-5,
-    parser.add_argument('--version', type=int, default=28)
+    parser.add_argument('--lr', type=float, default=2e-6)  # default is 5e-5,
+    parser.add_argument('--version', type=int, default=35)
+    parser.add_argument('--model_name', type=str, default='GPT2')
     args = parser.parse_args()
     print('Called with args: ', args)
     print()
-    main(args.epoch, args.batch_size, args.max_length, args.lr, args.version)
+    
+    # tensorboard setting
+    eventid = datetime.now().strftime('%m-%d %H:%M') # 월-일 시간:분
+    writer = SummaryWriter(f'runs/{args.version}_{args.model_name}_{args.lr}_{args.max_length}_{args.batch_size}_{eventid}')
+    
+    main(args.epoch, args.batch_size, args.max_length, args.lr, args.version, args.model_name)
