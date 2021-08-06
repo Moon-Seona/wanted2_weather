@@ -130,7 +130,7 @@ class ProblemDataset(Dataset):
         data = pd.read_csv(file).fillna('error')
         data['제출년도'] = list(map(str, data['제출년도']))
 
-        self.texts = data['과제명'] + '[SEP]' + data['사업_부처명'] + '[SEP]' + data['사업명'] + '[SEP]' + data['제출년도'] # @, &, %, +, !, //, ?
+        self.texts = data['과제명'] + '[SEP]' + data['요약문_연구목표'] + '[SEP]' + data['요약문_한글키워드'] # + '[SEP]' + data['제출년도'] # @, &, %, +, !, //, ?
 
        # okt = Okt()
         # clean_texts = []
@@ -204,7 +204,7 @@ class L1Trainer():
         dataset = ProblemDataset(data, tokenizer, stop_words, val='train')
         train_len = int(len(dataset) * 0.9)
         val_len = int((len(dataset) - train_len)/2)
-        test_len = len(dataset) - train_len - valid_len
+        test_len = len(dataset) - train_len - val_len
         train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(dataset, (train_len, val_len, test_len))
         test_dataset2 = ProblemDataset(test_data, tokenizer, stop_words, val='test')
 
@@ -459,7 +459,7 @@ class L1Trainer():
                 best_test_loss = test_loss
 
         print("- best epoch: %d - best valid acc: %.5f -  best valid loss: %.5f" % (best_epoch, best_val_acc, best_valid_loss))
-        print("- best valid acc: %.5f -  best valid loss: %.5f" % (best_test_acc, best_test_loss))
+        print("- best test acc: %.5f -  best test loss: %.5f" % (best_test_acc, best_test_loss))
         self.load_model(ver)
         predict_label = self.test(self.test_dataloader2, device)
         self.save_csv(predict_label, ver)
