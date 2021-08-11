@@ -7,6 +7,7 @@ import torch
 
 from datetime import datetime
 from sklearn.metrics import roc_auc_score, precision_recall_fscore_support
+from models import *
 from tokenization_kobert import KoBertTokenizer
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -25,13 +26,13 @@ from transformers import (
 sys.path.append("./")
 
 # path = '/data/weather2/open/'  # SA
-# path = '../../data/' # YS
-path = '../data/open/'  # SH
+path = '../../data/' # YS
+# path = '../data/open/'  # SH
 # path = '../../dacon_NLP_Data/' # EY
 
 ##### GPU가 두 개 일때 다른 GPU를 쓰고 싶으면...
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]= "1"
+# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"]= "1"
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -176,8 +177,7 @@ class ProblemDataset(Dataset):
           :obj:`Dict[str, str]`: Dictionary of inputs that contain text and
           asociated labels.
         """
-        return {'text': self.texts[item],
-                'label': self.labels[item]}
+        return {'text': self.texts[item], 'label': self.labels[item]}
 
 
 class L1Trainer():
@@ -220,10 +220,10 @@ class L1Trainer():
             model_config = GPT2Config.from_pretrained(pretrained_model_name_or_path='skt/kogpt2-base-v2', num_labels=len(set(labels_ids.values())))
             self.model = GPT2ForSequenceClassification.from_pretrained('skt/kogpt2-base-v2', config=model_config).to(device)
         elif model_name == 'BERT':
-            model_config = BertConfig.from_pretrained(pretrained_model_name_or_path='skt/kobert-base-v1', num_labels=len(set(labels_ids.values())))
-            self.model = BertForSequenceClassification.from_pretrained('skt/kobert-base-v1', config=model_config).to(device)
-
-    def train(self, dataloader, optimizer_, scheduler_, device_):
+            model_config = BertConfig.from_pretrained(pretrained_model_name_or_path='monologg/kobert', num_labels=len(set(labels_ids.values())))
+            self.model = Bert_base(model_config.hidden_size, len(set(labels_ids.values()))).to(device)
+            
+    def train(self, dataloader, optimizer_, scheduler_, device_, model_name_):
         # Use global variable for model.
         # Tracking variables.
         predictions_labels = []
@@ -234,68 +234,118 @@ class L1Trainer():
         # Put the model into training mode.
         self.model.train()
         print('- start training!')
+        
+        if(model_name_ == 'GPT2'):
+            # For each batch of training data...
+            for batch in tqdm(dataloader, total=len(dataloader)):
+                # Add original labels - use later for evaluation.
+                true_labels += batch['labels'].numpy().flatten().tolist()
+                iter_labels = batch.pop('labels')
 
-        # For each batch of training data...
-        for batch in tqdm(dataloader, total=len(dataloader)):
-            # Add original labels - use later for evaluation.
-            true_labels += batch['labels'].numpy().flatten().tolist()
+                # move batch to device
+                # batch.keys() = ['input_ids', 'token_type_ids', 'attention_mask', 'labels']
+                batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
 
-            # move batch to device
-            batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
+                # Always clear any previously calculated gradients before performing a backward pass.
+                self.model.zero_grad()
+                # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                outputs = self.model(**batch)
 
-            # Always clear any previously calculated gradients before performing a
-            # backward pass.
-            self.model.zero_grad()
+                # The call to `model` always returns a tuple, so we need to pull the
+                # loss value out of the tuple along with the logits. We will use logits
+                # later to calculate training accuracy.
+                loss, logits = outputs[:2]
+                
+                print('logits = ', logits[0].shape)
+                asdf
 
-            # Perform a forward pass (evaluate the model on this training batch).
-            # This will return the loss (rather than the model output) because we
-            # have provided the `labels`.
-            # The documentation for this a bert model function is here:
-            # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                # Accumulate the training loss over all of the batches so that we can
+                # calculate the average loss at the end. `loss` is a Tensor containing a
+                # single value; the `.item()` function just returns the Python value
+                # from the tensor.
+                total_loss += loss.item()
 
-            outputs = self.model(**batch)
+                # Perform a backward pass to calculate the gradients.
+                loss.backward()
 
-            # The call to `model` always returns a tuple, so we need to pull the
-            # loss value out of the tuple along with the logits. We will use logits
-            # later to calculate training accuracy.
+                # Clip the norm of the gradients to 1.0.
+                # This is to help prevent the "exploding gradients" problem.
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
-            loss, logits = outputs[:2]
-            #loss = outputs
+                # Update parameters and take a step using the computed gradient.
+                # The optimizer dictates the "update rule"--how the parameters are
+                # modified based on their gradients, the learning rate, etc.
+                optimizer_.step()
 
-            # Accumulate the training loss over all of the batches so that we can
-            # calculate the average loss at the end. `loss` is a Tensor containing a
-            # single value; the `.item()` function just returns the Python value
-            # from the tensor.
-            total_loss += loss.item()
+                # Update the learning rate.
+                scheduler_.step()
 
-            # Perform a backward pass to calculate the gradients.
-            loss.backward()
+                # Move logits and labels to CPU
+                logits = logits.detach().cpu().numpy()
 
-            # Clip the norm of the gradients to 1.0.
-            # This is to help prevent the "exploding gradients" problem.
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                # Convert these logits to list of predicted labels values.
+                predictions_labels += logits.argmax(axis=-1).flatten().tolist()
 
-            # Update parameters and take a step using the computed gradient.
-            # The optimizer dictates the "update rule"--how the parameters are
-            # modified based on their gradients, the learning rate, etc.
-            optimizer_.step()
+                # Calculate the average loss over the training data.
+                avg_epoch_loss = total_loss / len(dataloader)
 
-            # Update the learning rate.
-            scheduler_.step()
+            # Return all true labels and prediction for future evaluations.
+            return true_labels, predictions_labels, avg_epoch_loss
+        elif(model_name_ == 'BERT'):
+            # For each batch of training data...
+            for batch in tqdm(dataloader, total=len(dataloader)):
+                # Add original labels - use later for evaluation.
+                true_labels += batch['labels'].numpy().flatten().tolist()
+#                 iter_labels = batch.pop('labels')
 
-            # Move logits and labels to CPU
-            logits = logits.detach().cpu().numpy()
+                # move batch to device
+                # batch.keys() = ['input_ids', 'token_type_ids', 'attention_mask', 'labels']
+                batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
 
-            # Convert these logits to list of predicted labels values.
-            predictions_labels += logits.argmax(axis=-1).flatten().tolist()
+                # Always clear any previously calculated gradients before performing a backward pass.
+                self.model.zero_grad()
+                # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                outputs = self.model(**batch) # batch X label (softmax 통과)
 
-            # Calculate the average loss over the training data.
-            avg_epoch_loss = total_loss / len(dataloader)
+                # The call to `model` always returns a tuple, so we need to pull the
+                # loss value out of the tuple along with the logits. We will use logits
+                # later to calculate training accuracy.
+                loss, logits = outputs[:2]
+                
+                # Accumulate the training loss over all of the batches so that we can
+                # calculate the average loss at the end. `loss` is a Tensor containing a
+                # single value; the `.item()` function just returns the Python value
+                # from the tensor.
+                total_loss += loss.item()
 
-        # Return all true labels and prediction for future evaluations.
-        return true_labels, predictions_labels, avg_epoch_loss
+                # Perform a backward pass to calculate the gradients.
+                loss.backward()
 
-    def validation(self, dataloader, device_):
+                # Clip the norm of the gradients to 1.0.
+                # This is to help prevent the "exploding gradients" problem.
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+
+                # Update parameters and take a step using the computed gradient.
+                # The optimizer dictates the "update rule"--how the parameters are
+                # modified based on their gradients, the learning rate, etc.
+                optimizer_.step()
+
+                # Update the learning rate.
+                scheduler_.step()
+
+                # Move logits and labels to CPU
+                logits = logits.detach().cpu().numpy()
+
+                # Convert these logits to list of predicted labels values.
+                predictions_labels += logits.argmax(axis=-1).flatten().tolist()
+
+                # Calculate the average loss over the training data.
+                avg_epoch_loss = total_loss / len(dataloader)
+
+            # Return all true labels and prediction for future evaluations.
+            return true_labels, predictions_labels, avg_epoch_loss
+
+    def validation(self, dataloader, device_, model_name_):
         # Tracking variables
         predictions_labels = []
         true_labels = []
@@ -305,54 +355,101 @@ class L1Trainer():
         # Put the model in evaluation mode--the dropout layers behave differently
         # during evaluation.
         self.model.eval()
+        
+        if(model_name_ == 'GPT2'):
+            # Evaluate data for one epoch
+            for batch in tqdm(dataloader, total=len(dataloader)):
+                # add original labels
+                true_labels += batch['labels'].numpy().flatten().tolist()
 
-        # Evaluate data for one epoch
-        for batch in tqdm(dataloader, total=len(dataloader)):
-            # add original labels
-            true_labels += batch['labels'].numpy().flatten().tolist()
+                # move batch to device
+                batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
 
-            # move batch to device
-            batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
+                # Telling the model not to compute or store gradients, saving memory and
+                # speeding up validation
+                with torch.no_grad():
+                    # Forward pass, calculate logit predictions.
+                    # This will return the logits rather than the loss because we have
+                    # not provided labels.
+                    # token_type_ids is the same as the "segment ids", which
+                    # differentiates sentence 1 and 2 in 2-sentence tasks.
+                    # The documentation for this `model` function is here:
+                    # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                    outputs = self.model(**batch)
 
-            # Telling the model not to compute or store gradients, saving memory and
-            # speeding up validation
-            with torch.no_grad():
-                # Forward pass, calculate logit predictions.
-                # This will return the logits rather than the loss because we have
-                # not provided labels.
-                # token_type_ids is the same as the "segment ids", which
-                # differentiates sentence 1 and 2 in 2-sentence tasks.
-                # The documentation for this `model` function is here:
-                # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
-                outputs = self.model(**batch)
+                    # The call to `model` always returns a tuple, so we need to pull the
+                    # loss value out of the tuple along with the logits. We will use logits
+                    # later to to calculate training accuracy.
+                    loss, logits = outputs[:2]
 
-                # The call to `model` always returns a tuple, so we need to pull the
-                # loss value out of the tuple along with the logits. We will use logits
-                # later to to calculate training accuracy.
-                loss, logits = outputs[:2]
+                    # Move logits and labels to CPU
+                    logits = logits.detach().cpu().numpy()
 
-                # Move logits and labels to CPU
-                logits = logits.detach().cpu().numpy()
+                    # Accumulate the training loss over all of the batches so that we can
+                    # calculate the average loss at the end. `loss` is a Tensor containing a
+                    # single value; the `.item()` function just returns the Python value
+                    # from the tensor.
+                    total_loss += loss.item()
 
-                # Accumulate the training loss over all of the batches so that we can
-                # calculate the average loss at the end. `loss` is a Tensor containing a
-                # single value; the `.item()` function just returns the Python value
-                # from the tensor.
-                total_loss += loss.item()
+                    # get predicitons to list
+                    predict_content = logits.argmax(axis=-1).flatten().tolist()
 
-                # get predicitons to list
-                predict_content = logits.argmax(axis=-1).flatten().tolist()
+                    # update list
+                    predictions_labels += predict_content
 
-                # update list
-                predictions_labels += predict_content
+            # Calculate the average loss over the training data.
+            avg_epoch_loss = total_loss / len(dataloader)
 
-        # Calculate the average loss over the training data.
-        avg_epoch_loss = total_loss / len(dataloader)
+            # Return all true labels and prediciton for future evaluations.
+            return true_labels, predictions_labels, avg_epoch_loss
+        elif(model_name_ == 'BERT'):
+            # Evaluate data for one epoch
+            for batch in tqdm(dataloader, total=len(dataloader)):
+                # add original labels
+                true_labels += batch['labels'].numpy().flatten().tolist()
 
-        # Return all true labels and prediciton for future evaluations.
-        return true_labels, predictions_labels, avg_epoch_loss
+                # move batch to device
+                batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
 
-    def test(self, dataloader, device_):
+                # Telling the model not to compute or store gradients, saving memory and
+                # speeding up validation
+                with torch.no_grad():
+                    # Forward pass, calculate logit predictions.
+                    # This will return the logits rather than the loss because we have
+                    # not provided labels.
+                    # token_type_ids is the same as the "segment ids", which
+                    # differentiates sentence 1 and 2 in 2-sentence tasks.
+                    # The documentation for this `model` function is here:
+                    # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                    outputs = self.model(**batch)
+
+                    # The call to `model` always returns a tuple, so we need to pull the
+                    # loss value out of the tuple along with the logits. We will use logits
+                    # later to to calculate training accuracy.
+                    loss, logits = outputs[:2]
+
+                    # Move logits and labels to CPU
+                    logits = logits.detach().cpu().numpy()
+
+                    # Accumulate the training loss over all of the batches so that we can
+                    # calculate the average loss at the end. `loss` is a Tensor containing a
+                    # single value; the `.item()` function just returns the Python value
+                    # from the tensor.
+                    total_loss += loss.item()
+
+                    # get predicitons to list
+                    predict_content = logits.argmax(axis=-1).flatten().tolist()
+
+                    # update list
+                    predictions_labels += predict_content
+
+            # Calculate the average loss over the training data.
+            avg_epoch_loss = total_loss / len(dataloader)
+
+            # Return all true labels and prediciton for future evaluations.
+            return true_labels, predictions_labels, avg_epoch_loss
+
+    def test(self, dataloader, device_, model_name_):
         # Tracking variables
         predictions_labels = []
 
@@ -360,48 +457,91 @@ class L1Trainer():
         # during evaluation.
         self.model.eval()
 
-        # Evaluate data for one epoch
-        for batch in tqdm(dataloader, total=len(dataloader)):
-            # move batch to device
-            batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
+        if(model_name_ == 'GPT2'):
+            # Evaluate data for one epoch
+            for batch in tqdm(dataloader, total=len(dataloader)):
+                # move batch to device
+                batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
 
-            # Telling the model not to compute or store gradients, saving memory and
-            # speeding up validation
-            with torch.no_grad():
-                # Forward pass, calculate logit predictions.
-                # This will return the logits rather than the loss because we have
-                # not provided labels.
-                # token_type_ids is the same as the "segment ids", which
-                # differentiates sentence 1 and 2 in 2-sentence tasks.
-                # The documentation for this `model` function is here:
-                # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
-                outputs = self.model(**batch)
+                # Telling the model not to compute or store gradients, saving memory and
+                # speeding up validation
+                with torch.no_grad():
+                    # Forward pass, calculate logit predictions.
+                    # This will return the logits rather than the loss because we have
+                    # not provided labels.
+                    # token_type_ids is the same as the "segment ids", which
+                    # differentiates sentence 1 and 2 in 2-sentence tasks.
+                    # The documentation for this `model` function is here:
+                    # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                    outputs = self.model(**batch)
 
-                # The call to `model` always returns a tuple, so we need to pull the
-                # loss value out of the tuple along with the logits. We will use logits
-                # later to to calculate training accuracy.
-                loss, logits = outputs[:2]
+                    # The call to `model` always returns a tuple, so we need to pull the
+                    # loss value out of the tuple along with the logits. We will use logits
+                    # later to to calculate training accuracy.
+                    loss, logits = outputs[:2]
 
-                # Move logits and labels to CPU
-                logits = logits.detach().cpu().numpy()
+                    # Move logits and labels to CPU
+                    logits = logits.detach().cpu().numpy()
 
-                # Accumulate the training loss over all of the batches so that we can
-                # calculate the average loss at the end. `loss` is a Tensor containing a
-                # single value; the `.item()` function just returns the Python value
-                # from the tensor.
+                    # Accumulate the training loss over all of the batches so that we can
+                    # calculate the average loss at the end. `loss` is a Tensor containing a
+                    # single value; the `.item()` function just returns the Python value
+                    # from the tensor.
 
-                # get predicitons to list
-                predict_content = logits.argmax(axis=-1).flatten().tolist()
+                    # get predicitons to list
+                    predict_content = logits.argmax(axis=-1).flatten().tolist()
 
-                # update list
-                predictions_labels += predict_content
+                    # update list
+                    predictions_labels += predict_content
 
-        # Calculate the average loss over the training data.
+            # Calculate the average loss over the training data.
 
-        # Return all true labels and prediciton for future evaluations.
-        return predictions_labels
+            # Return all true labels and prediciton for future evaluations.
+            return predictions_labels
+        
+        elif(model_name_ == 'BERT'):
+            # Evaluate data for one epoch
+            for batch in tqdm(dataloader, total=len(dataloader)):
+                # move batch to device
+                batch = {k: v.type(torch.long).to(device_) for k, v in batch.items()}
 
-    def ProblemTrain(self, epoch, lr, ver):
+                # Telling the model not to compute or store gradients, saving memory and
+                # speeding up validation
+                with torch.no_grad():
+                    # Forward pass, calculate logit predictions.
+                    # This will return the logits rather than the loss because we have
+                    # not provided labels.
+                    # token_type_ids is the same as the "segment ids", which
+                    # differentiates sentence 1 and 2 in 2-sentence tasks.
+                    # The documentation for this `model` function is here:
+                    # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+                    outputs = self.model(**batch)
+
+                    # The call to `model` always returns a tuple, so we need to pull the
+                    # loss value out of the tuple along with the logits. We will use logits
+                    # later to to calculate training accuracy.
+                    loss, logits = outputs[:2]
+
+                    # Move logits and labels to CPU
+                    logits = logits.detach().cpu().numpy()
+
+                    # Accumulate the training loss over all of the batches so that we can
+                    # calculate the average loss at the end. `loss` is a Tensor containing a
+                    # single value; the `.item()` function just returns the Python value
+                    # from the tensor.
+
+                    # get predicitons to list
+                    predict_content = logits.argmax(axis=-1).flatten().tolist()
+
+                    # update list
+                    predictions_labels += predict_content
+
+            # Calculate the average loss over the training data.
+
+            # Return all true labels and prediciton for future evaluations.
+            return predictions_labels
+
+    def ProblemTrain(self, epoch, lr, ver, model_name):
         epochs = epoch
 
         optimizer = AdamW(self.model.parameters(),lr=lr, eps=1e-8) # default lr is 5e-5, our notebook had 2e-5, default eps is 1e-8.
@@ -427,15 +567,15 @@ class L1Trainer():
 
             print('- Training on batches...')
             # Perform one full pass over the training set.
-            train_labels, train_predict, train_loss = self.train(self.train_dataloader, optimizer, scheduler, device)
+            train_labels, train_predict, train_loss = self.train(self.train_dataloader, optimizer, scheduler, device, model_name)
             _, _, train_acc, _ = precision_recall_fscore_support(train_labels, train_predict, average='macro')
 
             # Get prediction form model on validation data.
             print('- Validation on batches...')
-            valid_labels, valid_predict, val_loss = self.validation(self.valid_dataloader, device)
+            valid_labels, valid_predict, val_loss = self.validation(self.valid_dataloader, device, model_name)
             _, _, val_acc, _ = precision_recall_fscore_support(valid_labels, valid_predict, average='macro')
             
-            test_labels, test_predict, test_loss = self.validation(self.test_dataloader, device)
+            test_labels, test_predict, test_loss = self.validation(self.test_dataloader, device, model_name)
             _, _, test_acc, _ = precision_recall_fscore_support(test_labels, test_predict, average='macro')
 
             # Print loss and accuracy values to see how training evolves.
@@ -487,7 +627,7 @@ class L1Trainer():
 
 def main(epoch, batch_size, max_length, lr, ver, model_name):
     model = L1Trainer(batch_size, max_length, model_name)
-    model.ProblemTrain(epoch, lr, ver)
+    model.ProblemTrain(epoch, lr, ver, model_name)
 
 
 if __name__ == "__main__":
@@ -498,7 +638,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=400)
     parser.add_argument('--lr', type=float, default=5e-5)  # default is 5e-5,
-    parser.add_argument('--version', type=int, default=37)
+    parser.add_argument('--version', type=int, default=99)
     parser.add_argument('--model_name', type=str, default='BERT')
     args = parser.parse_args()
     print('Called with args: ', args)

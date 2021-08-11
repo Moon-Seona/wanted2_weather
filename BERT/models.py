@@ -113,6 +113,7 @@ class Bert_base(nn.Module):
         self.Bert = BertModel.from_pretrained('monologg/kobert')
         self.Linear = nn.Linear(hidden, labelnum)
         self.Softmax = nn.Softmax(dim=-1)
+        self.CrossEntropyLoss = nn.CrossEntropyLoss(weight=None, size_average=None, ignore_index=-100, reduce=None, reduction='mean')
         
     def mean_pooling(self, model_output, attention_mask):
         token_embeddings = model_output[0]  # First element of model_output contains all token embeddings # batch x seq x hidden
@@ -137,9 +138,12 @@ class Bert_base(nn.Module):
         # attention_mask = batch X seq
         
         # return 값은 batch X label
+        iter_labels = batch.pop('labels')
 
         text_output = self.Bert(**batch)
         text_embedding = self.mean_pooling(text_output, batch['attention_mask'])
         text_embedding = self.Linear(text_embedding)
-        text_softmax = self.Softmax(text_embedding) # batch X label
-        return text_softmax # batch X label
+#         text_softmax = self.Softmax(text_embedding) # batch X label
+        loss = self.CrossEntropyLoss(text_embedding, iter_labels)
+        output = [loss, text_embedding, 0]
+        return output # loss, logits
